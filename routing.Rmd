@@ -116,6 +116,8 @@ The following constructs a URL based on the [Google Maps Directions API](https:/
 
 You'll need to [get a Google Maps API Key](https://developers.google.com/maps/documentation/distance-matrix/get-api-key#key) or just use mine.
 
+Note the `*.csv` input and output to the [`data`](https://github.com/bbest/sbdev/tree/gh-pages/data) folder.
+
 ```{r gmapsdistance}
 suppressPackageStartupMessages({
   library(dplyr)
