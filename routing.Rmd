@@ -1,0 +1,215 @@
+---
+title: "sbdevelopment"
+author: "Ben Best"
+date: "February 2, 2016"
+output:
+  html_document:
+    toc: true
+---
+
+## Comparison Test
+
+Survey data:
+
+- location by parcel id
+    - AUD: in (n=30)/out of zone (n=120 total)
+    - topography: high vs low slope areas determining bikeability
+- miles commute to work (by zip code)
+
+Dealing with topography:
+
+- `raster::terrain(dem, opt='slope', unit='radians', neighbors=8)`
+- [Santa Barbara, California Coastal Digital Elevation Model](http://www.ngdc.noaa.gov/docucomp/page?xml=NOAA/NESDIS/NGDC/MGG/DEM/iso/xml/603.xml&view=getDataView&header=none) @ 10 - 90m resolution
+- [Data Catalog - SB County](http://cosb.countyofsb.org/gis/default.aspx?id=2802)
+
+
+
+Test: in/out of AUD ~ commute less/more. control for topography. Goleta/Carp diff't from dtown SB.
+
+Issues:
+- `?sample`
+
+## `walkscoreAPI`
+
+Ditched this method because package out of date, and API for transit score not available. Note `eval=F` in Rmd of R chunk.
+
+Links:
+
+* [101 Juana Maria Street, Santa Barbara CA - Walk Score](https://www.walkscore.com/score/101-juana-maria-st-santa-barbara-ca-93103)
+* [1319 Chapala Street, Santa Barbara CA - Walk Score](https://www.walkscore.com/score/1319-chapala-st-santa-barbara-ca-93101)
+* [Walk Score Methodology](https://www.walkscore.com/methodology.shtml)
+* [Bike Score Methodology](https://www.walkscore.com/bike-score-methodology.shtml)
+* [Transit Score Methodology](https://www.walkscore.com/transit-score-methodology.shtml)
+
+Let's use the [Walk Score API for web and mobile developers](https://www.walkscore.com/professional/api.php), specifically the [CRAN - Package walkscoreAPI](https://cran.r-project.org/web/packages/walkscoreAPI/).
+
+- Your WS API quota is currently 5,000 calls per day.
+
+```{r walkscoreAPI, eval=F}
+library(walkscoreAPI) # install.packages('walkscoreAPI') # 
+
+# added research=yes to URL for getTS to work
+getTS = function (x, y, city, state, key, research='yes'){
+    city <- gsub(" ", "+", city)
+    URL <- paste("http://transit.walkscore.com/transit/score/?lat=", 
+        y, "&lon=", x, "&city=", city, "&state=", state, "&wsapikey=", 
+        key, "&research=", research, sep = "")
+
+    X <- character(0)
+    X <- c(X, scan(file = URL, what = "", sep = "\n", quiet = TRUE))
+    string <- X[grep("transit_score", X)]
+    string2 <- X[grep("ws_link", X)]
+    string3 <- X[grep("description", X)]
+    string4 <- X[grep("summary", X)]
+    if (length(X) > 0) {
+        tscore <- strsplit(string, ": ")
+        tscore <- gsub(",", "", tscore[[1]][2])
+        tscore <- as.numeric(tscore)
+        link <- strsplit(string2, ": ")
+        link <- gsub("\"", "", link[[1]][2], fixed = TRUE)
+        link <- gsub(", ", "", link)
+        desc <- strsplit(string3, ": ")
+        desc <- gsub("\"", "", desc[[1]][2], fixed = TRUE)
+        desc <- gsub(", ", "", desc)
+        sum <- strsplit(string4, ": ")
+        sum <- gsub("\"", "", sum[[1]][2], fixed = TRUE)
+        sum <- gsub(", ", "", sum)
+    }
+    else {
+        print("error, please check supported cities list")
+    }
+    object <- list()
+    class(object) <- "TransitScore"
+    object$transitscore <- tscore
+    object$url <- link
+    object$description <- desc
+    object$summary <- sum
+    return(object)
+}
+
+
+ws_key = 'e5bc0a4a03023ef0989dc3b3d27cde6d'
+# for (i in 1:nrow(df)){ 
+
+  street = '1319 Chapala St' # df[i,'street']
+  city = 'Santa Barbara'     # df[i,'city']
+  state = 'CA'
+  
+  address = sprintf('%s, %s %s', street, city, state)
+  xy = ggmap::geocode(address)
+  
+  # transit score
+  ts = getTS(xy$lon, xy$lat, tolower(city), tolower(state), ws_key)
+  
+  # walk score
+  ws = getWS(xy$lon, xy$lat, ws_key)
+  
+
+# } # end loop
+```
+
+## Google Maps Directions API
+
+The following constructs a URL based on the [Google Maps Directions API](https://developers.google.com/maps/documentation/directions/intro#TravelModes) and processes the JSON return object.
+
+You'll need to [get a Google Maps API Key](https://developers.google.com/maps/documentation/distance-matrix/get-api-key#key) or just use mine.
+
+```{r gmapsdistance}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(stringr)
+  library(jsonlite)
+})
+
+# set variables: working directory, csv in/out, google maps key
+csv_in  = 'data/addresses.csv'
+csv_out = 'data/addresses_gmdist.csv'
+gm_key = 'AIzaSyCSkbz0pwqF2kPgZ3rReyOlGpSFrqaVhLQ'
+
+# google maps directions api options
+departure_time = '2016-02-03 8:00:00' %>% # future. integer in seconds since midnight, January 1, 1970 UTC
+  strptime('%Y-%m-%d %H:%M:%S') %>% 
+  difftime(strptime('1970-01-01 0:00:00', '%Y-%m-%d %H:%M:%S'), units='secs') %>%
+  as.integer()
+modes = c('driving','walking','bicycling','transit')
+  
+# set wd, read addresses, add begin addresses and url columns
+a = read_csv(csv_in) %>%
+  mutate(
+    beg_address = sprintf('%s, %s CA', beg_street, beg_city),
+    beg_address_url = beg_address %>%
+      str_replace_all(c(' '='+',','='')),
+    url = paste0(
+      'https://maps.googleapis.com/maps/api/distancematrix/json?',
+      'origins=', beg_address_url,
+      '&destinations=', end_zip,
+      '&key=', gm_key,
+      '&departure_time=', departure_time))
+
+# iterate through addresses
+for (i in 1:nrow(a)){ 
+  #cat(sprintf('%03d: %s -> %s\n', i, a$beg_address_url[i], a$end_zip[i]))
+  
+  # iterate through modes
+  for (mode in modes){
+
+    # input
+    url_mode = paste0(a$url[i],'&mode=',mode)
+    fld_dist_km = sprintf('%s_dist_km', mode)
+    fld_time_min = sprintf('%s_time_min', mode)
+    
+    # fetch result object from Google
+    #cat(sprintf('  %s: %s\n', mode, url_mode))
+    o = fromJSON(url_mode, simplifyVector=F)
+    
+    # interpret result object
+    if (o$status != 'OK'){
+      cat(sprintf('  %s: %s\n', mode, url_mode))
+      cat(sprintf('    ERROR with:\n      %s\n%s', url_mode, str(o)))
+    } else{
+      #if (i==2) browser() # select(a, -url)
+      a[i, fld_dist_km] = o$rows[[1]]$elements[[1]]$distance$value / 1000
+      a[i, fld_time_min] = o$rows[[1]]$elements[[1]]$duration$value / 60
+    }
+    #print(select(a, -url))
+  }
+  
+} # end loop
+
+# write out csv
+a %>%
+  write_csv(csv_out)
+
+# output table
+a %>% 
+  select(beg_address, end_zip, ends_with('_km'), ends_with('_min')) %>%
+  DT::datatable()
+```
+
+## `ggmap::route`
+
+Here we'll use the `ggmap` package to get a detailed route and plot it. Note that you should be able to get the above information by summarizing this table, except `departure_time` is not an available argument.
+
+```{r}
+suppressPackageStartupMessages({
+  library(ggmap)
+})
+
+# vars
+mode = 'bicycling'
+from = a$beg_address[1]
+to   = as.character(a$end_zip[1])
+
+# route
+route_df = route(from, to, mode, structure = "route")
+
+# plot
+qmap(location='Santa Barbara, CA', zoom=11) +
+  geom_path(
+    aes(x=lon, y=lat),  colour = "red", size = 1.5,
+    data=route_df, lineend = "round")
+
+# table
+DT::datatable(route_df)
+```
