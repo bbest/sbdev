@@ -7,6 +7,8 @@ output:
     toc: true
 ---
 
+See [raw routing.Rmd](https://raw.githubusercontent.com/bbest/sbdev/gh-pages/routing.Rmd).
+
 ## Comparison Test
 
 Survey data:
